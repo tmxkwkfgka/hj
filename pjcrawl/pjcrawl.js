@@ -1,9 +1,12 @@
+const mongoose = require("mongoose")
+,Schema = mongoose.Schema
+
 const phantom = require('phantom');
 var a = require('debug')('worker:a');
 const cheerio = require('cheerio');
 const elib = require("./extLib");
 var scraper = require('table-scraper');
-const mongoose = require("mongoose");
+
 var rec = null;
 
 var mongoDB = 'mongodb://127.0.0.1/my_database';
@@ -14,12 +17,32 @@ mongoose.Promise = global.Promise;
 var db = mongoose.connection;
 
 //Bind connection to error event (to get notification of connection errors)
+db.on("open", ()=>{
+  console.log("connected to the mongod server");
+})
 db.on('error', console.error.bind(console, 'MongoDB connection error:'));
+
+//let titleSchema = null;
+//let titleModel = null;
+
+let titleSchema = new Schema({
+  title: String,
+  startDate:  Date,
+  endDate: Date,
+  classify: String,
+  stage: String,
+  link: String,
+  name: String,
+});
+
+let titleModel = mongoose.model("title", titleSchema);
+let mapping =  null;
 
 async function crawlRun(recipe) {
 
+    mapping = recipe.mapping;
 
-   rec = recipe;
+    rec = recipe;
 
     const instance = await phantom.create(['--ignore-ssl-errors=true', '--load-images=no', '--proxy-type=none']);
     const page = await instance.createPage();
@@ -36,8 +59,6 @@ async function crawlRun(recipe) {
     await page.injectJs("dom-to-json.js");
     var retNumEles = await page.evaluate(getPageNumElement);
     
-
-
     let pages = [];
     for(var i =0; i<retNumEles.length; i++){
     
@@ -45,8 +66,6 @@ async function crawlRun(recipe) {
      
       
     }
-
-   
     await instance.exit();
     
   }
@@ -119,18 +138,21 @@ async function crawlRun(recipe) {
         return $(tableSel + " > tbody")[0].children.length
       },rec.tableSel);
 
+      //table obj는 제목들만 모아놓은 array
       let tableObj = await page.evaluate(function(tableSel){
 
         ret = [];
         var ths = $(tableSel + " > thead > tr > th");
+        
+        var voidSchema = {};
         var keys = ths.map(function(i, v){
+          voidSchema[v.innerText] = String;
           return v.innerText;
         });
 
         var trs = $(tableSel + " > tbody > tr");
         for(var a=0; a<trs.length; a++){
-
-          
+         
           var tds = trs[a].children;
           var tmpobj = {};
           for(var b=0; b<tds.length; b++){
@@ -144,9 +166,10 @@ async function crawlRun(recipe) {
 
       }, rec.tableSel);
       
-   
-
-      for(var g=1; g<=maxNum; g++){
+      console.log("table obj = ", tableObj);
+      
+      let pushedArr = [];
+      for(var g=2; g<=maxNum; g++){
 
         let gasiURL =  await page.evaluate(clickGasi, rec.rowSel(g));
         page.on("onLoadFinished", function(status){
@@ -154,6 +177,7 @@ async function crawlRun(recipe) {
         });
        
         var reTry = 0;
+        
         while(gasiURL == "error" && reTry < 3){
 
           console.log("@@ 다시 evaluate", reTry, g);
@@ -163,19 +187,47 @@ async function crawlRun(recipe) {
         }
 
         let currentUrl = await page.property('url');
-        console.log("gasi url  =", currentUrl);
+        console.log("gasi url  =", currentUrl ,g);
+      
+        let ob = {};
+        //console.log("tobj[g] = ", tableObj[g]);
+        Object.keys(tableObj[g-1]).forEach((k,ki)=>{
+          //맵핑에 있을때
+        
+          console.log("key and mapping", k, mapping);
+          if(mapping[k] != undefined){
+            ob[mapping[k]] = tableObj[g-1][k];
+          }
+
+          
+        })
+
+        //ob.link = 
         tableObj[g-1].URL = currentUrl;
+        ob.link = currentUrl;
+        pushedArr.push(ob);
+        console.log("$$$$pushed arr = ", pushedArr);
+
+
+
+        
         await page.render("gasi_" +pageNum.toString()+ "_" + g.toString() + ".png");
         await page.goBack();
 
-       }
+       } // g loop 
+
+       titleModel.insertMany(pushedArr, (err)=>{
+        console.log("titles pushed ", err);
+      })
+
+       
 
       console.log("last tableobj ", tableObj);
 
 
       
      // return page;
-  }
+  } //getSectorPage
 
   function clickGasi(findStr){
           
