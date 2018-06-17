@@ -38,8 +38,69 @@ let titleSchema = new Schema({
 let titleModel = mongoose.model("title", titleSchema);
 let mapping =  null;
 
+
+async function sleep(ms) {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function asyncLoadFinish(page){
+  await new Promise((resolve)=>{
+    page.on('onLoadFinished', (status)=>{
+      console.log("아싱크 async load finish", status)
+      resolve();
+      
+    })
+  })
+}
+
+async function waitFor($config)
+{
+  console.log("wait for.......")
+  await new Promise((resolve, reject)=>{
+
+    function doing(resolve){
+      $config._start = $config._start || new Date();
+
+      if ($config.timeout && new Date - $config._start > $config.timeout) {
+          if ($config.error) $config.error();
+          if ($config.debug) console.log('timedout ' + (new Date - $config._start) + 'ms');
+          return resolve();
+      }
+  
+      //console.log("config check = ", $config.check())
+      $config.check()
+      .then(val=>{
+        if(val){
+          if ($config.debug) console.log('success waitfor' + (new Date - $config._start) + 'ms');
+          return resolve();
+          
+        }else{
+          setTimeout(doing, $config.interval || 0, resolve);
+        }
+      })
+      .catch(err=>{
+        console.log("err = ", err)
+      })
+
+    }
+
+    doing(resolve);
+  
+    // if ($config.check().then()) {
+    //     if ($config.debug) console.log('success waitfor' + (new Date - $config._start) + 'ms');
+    //     return resolve($config.success());
+    // }
+
+    
+  })
+
+}
+
 async function crawlRun(recipe) {
 
+    
     mapping = recipe.mapping;
 
     rec = recipe;
@@ -74,18 +135,19 @@ async function crawlRun(recipe) {
     console.log(tbodySelector);
 
   }
-
+  
   function getPageNumElement(){
       var pagination  = document.getElementsByClassName("pagination")[0];
       var pageChildren = pagination.children;
       var arrRet = [];
       
       for(var i=0; i<pageChildren.length; i++){
+          var child = getAtag(pageChildren[i],0);
 
-          if(!isNaN(pageChildren[i].innerText)){
+          if(!isNaN(child.innerText)){
 
-              console.log(pageChildren[i]);
-            arrRet.push(toJSON(pageChildren[i]));
+              console.log(child);
+              arrRet.push(toJSON(child));
 
           }
             
@@ -132,6 +194,8 @@ async function crawlRun(recipe) {
 
       },numEle);
 
+      //await asyncLoadFinish(page);
+
       let afterScreen = await page.render("gd_" + pageNum.toString()+ ".png");
       //console.log("page = ", page);
       let maxNum = await page.evaluate(function(tableSel){
@@ -139,10 +203,16 @@ async function crawlRun(recipe) {
       },rec.tableSel);
 
       //table obj는 제목들만 모아놓은 array
-      let tableObj = await page.evaluate(function(tableSel){
+      let tableObj = await page.evaluate(function(tableSel, thead){
 
         ret = [];
-        var ths = $(tableSel + " > thead > tr > th");
+        var theadStr = "";
+        if(thead)
+          theadStr = " > thead > tr > th"
+        else
+          theadStr = " > tbody > tr > th"
+
+        var ths = $(tableSel + theadStr);
         
         var voidSchema = {};
         var keys = ths.map(function(i, v){
@@ -164,7 +234,7 @@ async function crawlRun(recipe) {
         }
         return ret;
 
-      }, rec.tableSel);
+      }, rec.tableSel, rec.thead);
       
       console.log("table obj = ", tableObj);
       
@@ -172,9 +242,7 @@ async function crawlRun(recipe) {
       for(var g=2; g<=maxNum; g++){
 
         let gasiURL =  await page.evaluate(clickGasi, rec.rowSel(g));
-        page.on("onLoadFinished", function(status){
-          console.log("@@@@gasi url onload finished  = ", status);
-        });
+        
        
         var reTry = 0;
         
@@ -186,6 +254,33 @@ async function crawlRun(recipe) {
 
         }
 
+        //await asyncLoadFinish(page);
+        await waitFor({
+          debug: true,  // optional
+          interval: 200,  // optional
+          timeout: 7000,  // optional
+          check: function () {
+              return page.evaluate(function(tableSel) {
+                console.log("check functin ...", document.querySelectorAll(tableSel).length)
+                
+                var selLen = document.querySelectorAll(tableSel).length;
+                if(selLen ==0)
+                  return true;
+                else 
+                  return false;
+                 
+              }, rec.tableSel);
+          },
+          success: function () {
+              console.log("im success function!!")
+          },
+          error: function () {} // optional
+        })
+
+     
+
+
+        //게시물 url
         let currentUrl = await page.property('url');
         console.log("gasi url  =", currentUrl ,g);
       
@@ -212,8 +307,9 @@ async function crawlRun(recipe) {
 
         
         await page.render("gasi_" +pageNum.toString()+ "_" + g.toString() + ".png");
-        await page.goBack();
-
+        
+        let back = await page.goBack();
+        
        } // g loop 
 
        titleModel.insertMany(pushedArr, (err)=>{
@@ -229,30 +325,37 @@ async function crawlRun(recipe) {
      // return page;
   } //getSectorPage
 
+  //게시물 클릭하는 함수 url 가져오려고
   function clickGasi(findStr){
           
 
-    var element  = $(findStr)[0];
+    //var element  = $(findStr)[0];
+    var element = document.querySelector(findStr);
 
     if(!element){
       console.log("@@@@find error", findStr);
       return "error";
+    }else{
+      console.log("%%클릭게시 element = ", element, findStr, element.parentNode, element.text, element.href);
     }
 
-    var ev = document.createEvent("MouseEvent");
-    ev.initMouseEvent(
-      "click",
-      true /* bubble */, true /* cancelable */,
-      window, null,
-      0, 0, 0, 0, /* coordinates */
-      false, false, false, false, /* modifier keys */
-      0 /*left*/, null
-    );
-//.pagination > a:nth-child(4)
-  element.dispatchEvent(ev);
-  
-  
+    
+  //   var ev = document.createEvent("MouseEvent");
+  //   ev.initMouseEvent(
+  //     "click",
+  //     true /* bubble */, true /* cancelable */,
+  //     window, null,
+  //     0, 0, 0, 0, /* coordinates */
+  //     false, false, false, false, /* modifier keys */
+  //     0 /*left*/, null
+  //   );
 
+  // element.dispatchEvent(ev);
+
+  //  console.log("사각형 = ", element.getBoundingClientRect().top, element.getBoundingClientRect().height);
+  //  return element.getBoundingClientRect();
+  element.click();
+  
   }
 
 

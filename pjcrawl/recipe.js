@@ -8,6 +8,7 @@ var hInfos = [
         rowSel: function(n){
             return "#recruitNoticeVo > div.boardTypeTbl > table > tbody > tr:nth-child(" + n.toString() + ") > td.alignL > a"
         },
+        thead: true,
         mapping: {
             "제목": "title",
             "시작":  "startDate",
@@ -27,6 +28,7 @@ var hInfos = [
             return "#boardSearchForm > div > div:nth-child(2) > table > tbody > tr:nth-child(" + n.toString() + ") > td:nth-child(2) > a"
 
         },
+        thead:false,
         mapping: {
             "제목": "title",
             "등록일":  "startDate",

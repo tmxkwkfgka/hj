@@ -73,4 +73,20 @@ function toJSON(node) {
     return node;
   }
 
+  function getAtag(node, depth){
+    if(node.tagName == 'a' || node.tagName == 'A')
+      return node;
+
+    if(node.childNodes.length > 0){
+      if(node.childNodes[0].tagName == 'a' || node.childNodes[0].tagName == 'A'){
+        return node.childNodes[0];
+      }else{
+        getAtag(node.childNodes[0], depgth++);
+      }
+
+    }else{
+      return node;
+    }
+
+  }
  
