@@ -64,9 +64,15 @@ async function waitFor($config)
       $config._start = $config._start || new Date();
 
       if ($config.timeout && new Date - $config._start > $config.timeout) {
-          if ($config.error) $config.error();
-          if ($config.debug) console.log('timedout ' + (new Date - $config._start) + 'ms');
+        if ($config.debug) console.log('timedout ' + (new Date - $config._start) + 'ms');
+        if ($config.error && $config.reclick > 0){
+          console.log("config error 전 ", $config.reclick);
+          return resolve($config.error());
+        }else{
           return resolve();
+        }
+         
+          
       }
   
       //console.log("config check = ", $config.check())
@@ -157,6 +163,53 @@ async function crawlRun(recipe) {
 
   }
 
+
+
+  async function clickAndWait(page, rNum, rowSel, tableSel, reclickMax){
+    let gasiURL =  await page.evaluate(clickGasi, rowSel(rNum));
+            
+        var reTry = 0;
+        
+        while(gasiURL == "error" && reTry < 5){
+
+          console.log("@@ 다시 evaluate", reTry, rNum);
+          gasiURL = await page.evaluate(clickGasi, rowSel(rNum));
+          reTry++;
+
+        }
+
+        //await asyncLoadFinish(page);
+        await waitFor({
+          debug: true,  // optional
+          interval: 200,  // optional
+          timeout: 7000,  // optional
+          reclick: reclickMax,
+          check: function () {
+              return page.evaluate(function(tableSel) {
+                console.log("check functin ...", document.querySelectorAll(tableSel).length)
+                
+                var selLen = document.querySelectorAll(tableSel).length;
+                if(selLen ==0)
+                  return true;
+                else 
+                  return false;
+                 
+              }, tableSel);
+          },
+          success: function () {
+              console.log("im success function!!")
+          },
+          error: async function () {
+            console.log("다시 클릭부터 ... ", reclickMax)
+            await clickAndWait(page, rNum, rowSel,tableSel, --reclickMax)
+          } // optional
+        })
+
+
+
+
+  }
+
   async function getSectorPage(numEle, pageNum){
     
     
@@ -241,45 +294,7 @@ async function crawlRun(recipe) {
       let pushedArr = [];
       for(var g=2; g<=maxNum; g++){
 
-        let gasiURL =  await page.evaluate(clickGasi, rec.rowSel(g));
-        
-       
-        var reTry = 0;
-        
-        while(gasiURL == "error" && reTry < 3){
-
-          console.log("@@ 다시 evaluate", reTry, g);
-          gasiURL = await page.evaluate(clickGasi, rec.rowSel(g));
-          reTry++;
-
-        }
-
-        //await asyncLoadFinish(page);
-        await waitFor({
-          debug: true,  // optional
-          interval: 200,  // optional
-          timeout: 7000,  // optional
-          check: function () {
-              return page.evaluate(function(tableSel) {
-                console.log("check functin ...", document.querySelectorAll(tableSel).length)
-                
-                var selLen = document.querySelectorAll(tableSel).length;
-                if(selLen ==0)
-                  return true;
-                else 
-                  return false;
-                 
-              }, rec.tableSel);
-          },
-          success: function () {
-              console.log("im success function!!")
-          },
-          error: function () {} // optional
-        })
-
-     
-
-
+        await clickAndWait(page, g, rec.rowSel, rec.tableSel, 3);
         //게시물 url
         let currentUrl = await page.property('url');
         console.log("gasi url  =", currentUrl ,g);
@@ -302,13 +317,35 @@ async function crawlRun(recipe) {
         ob.link = currentUrl;
         pushedArr.push(ob);
         console.log("$$$$pushed arr = ", pushedArr);
-
-
-
-        
+       
         await page.render("gasi_" +pageNum.toString()+ "_" + g.toString() + ".png");
         
         let back = await page.goBack();
+
+        await waitFor({
+          debug: true,  // optional
+          interval: 200,  // optional
+          timeout: 7000,  // optional
+          reclick: 0,
+          check: function () {
+              return page.evaluate(function(tableSel) {
+                console.log("check functin ...", document.querySelectorAll(tableSel).length)
+                
+                var selLen = document.querySelectorAll(tableSel).length;
+                if(selLen > 0)
+                  return true;
+                else 
+                  return false;
+                 
+              }, rec.tableSel);
+          },
+          success: function () {
+              console.log("im gobacks success function!!")
+          },
+          error: false
+        });
+
+
         
        } // g loop 
 
@@ -333,7 +370,7 @@ async function crawlRun(recipe) {
     var element = document.querySelector(findStr);
 
     if(!element){
-      console.log("@@@@find error", findStr);
+      console.log("@@@@find error", findStr, " ", document.URL);
       return "error";
     }else{
       console.log("%%클릭게시 element = ", element, findStr, element.parentNode, element.text, element.href);
